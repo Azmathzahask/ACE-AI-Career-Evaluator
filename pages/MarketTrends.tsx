@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ResumeData, MarketAnalysis, MarketTrend } from '../types';
 import { 
@@ -74,16 +73,21 @@ const MarketTrends: React.FC<{ resume: ResumeData | null }> = ({ resume }) => {
         setQuotaExceeded(true);
         setRetryTimer(60);
       } else {
-        setError('Could not load market trends. Check your API key and connection, then try again.');
+        const message = err instanceof Error
+          ? err.message
+          : 'Could not load market trends. Check your API key and connection, then try again.';
+        setError(message);
       }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchTrends();
-  }, []);
+  // Auto-fetch disabled to preserve quota during development.
+  // User can click "Refresh Trends" to load data manually.
+  // useEffect(() => {
+  //   fetchTrends();
+  // }, []);
 
   useEffect(() => {
     let interval: number;
