@@ -1,13 +1,55 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { ResumeData, CareerMatch, LearningPlan, QuizQuestion, ProjectAnalysis, PersonalityAnalysis, ScrapedJob, ATSAnalysis, MarketAnalysis } from "../types";
 
 // Core Initialization - Exclusively using process.env.API_KEY for Tier 1 platform injection
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const geminiApiKey = typeof process !== "undefined" && process.env
+  ? (process.env.API_KEY || process.env.GEMINI_API_KEY || "")
+  : (viteEnv ? (viteEnv.VITE_GEMINI_API_KEY || viteEnv.VITE_API_KEY || "") : "");
+
+const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 // Use stable model so all features work (Profile Init, Jobs, Trends, Evaluation, etc.)
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_MODEL_PRO = "gemini-2.5-pro";
+
+function buildFallbackMarketAnalysis(userSkills: string[]): MarketAnalysis {
+  const skillsLabel = userSkills.length > 0 ? userSkills.slice(0, 3).join(', ') : 'software engineering';
+
+  return {
+    overallSentiment: 'cautiously optimistic',
+    sentimentScore: 72,
+    trends: [
+      {
+        title: `Demand for ${skillsLabel} remains resilient`,
+        summary: `Organizations continue to invest in ${skillsLabel} as they modernize products, automate workflows, and strengthen digital operations.`,
+        impact: 'positive',
+        category: 'Hiring Demand'
+      },
+      {
+        title: 'AI-assisted delivery is becoming standard',
+        summary: 'Teams are pairing technical depth with AI tool fluency, improving speed and quality across delivery pipelines.',
+        impact: 'positive',
+        category: 'Automation'
+      },
+      {
+        title: 'Cloud and data skills remain high-value',
+        summary: 'Reliable infrastructure, observability, and data-driven decision-making continue to be differentiators in hiring.',
+        impact: 'positive',
+        category: 'Platform Engineering'
+      },
+      {
+        title: 'Cross-functional collaboration is increasingly important',
+        summary: 'Employers are rewarding professionals who can bridge engineering, product, and business outcomes effectively.',
+        impact: 'neutral',
+        category: 'Career Mobility'
+      }
+    ],
+    sources: [
+      { title: 'Local fallback market snapshot', url: 'https://example.com/market-trends' }
+    ]
+  };
+}
 
 /**
  * NEURAL QUOTA MONITOR
@@ -205,45 +247,54 @@ export const findJobMatches = async (resume: ResumeData | null, customQuery?: st
 };
 
 export const getMarketTrends = async (userSkills: string[]): Promise<MarketAnalysis> => {
-  return handleGeminiCall(async () => {
-    const skillsString = userSkills.join(", ");
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: `Based on current tech industry knowledge, analyze global job market trends relevant to these skills: ${skillsString}. Return a JSON object with: overallSentiment (string, e.g. "cautiously optimistic"), sentimentScore (number 0-100), and trends (array of objects, each with title, summary, impact one of "positive"|"neutral"|"negative", and category). Provide 4-6 trends.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            overallSentiment: { type: Type.STRING },
-            sentimentScore: { type: Type.NUMBER },
-            trends: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  summary: { type: Type.STRING },
-                  impact: { type: Type.STRING },
-                  category: { type: Type.STRING },
+  if (!ai || !geminiApiKey) {
+    return buildFallbackMarketAnalysis(userSkills);
+  }
+
+  try {
+    return await handleGeminiCall(async () => {
+      const skillsString = userSkills.join(", ");
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: `Based on current tech industry knowledge, analyze global job market trends relevant to these skills: ${skillsString}. Return a JSON object with: overallSentiment (string, e.g. "cautiously optimistic"), sentimentScore (number 0-100), and trends (array of objects, each with title, summary, impact one of "positive"|"neutral"|"negative", and category). Provide 4-6 trends.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              overallSentiment: { type: Type.STRING },
+              sentimentScore: { type: Type.NUMBER },
+              trends: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    summary: { type: Type.STRING },
+                    impact: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                  },
+                  required: ["title", "summary", "impact", "category"],
                 },
-                required: ["title", "summary", "impact", "category"],
               },
             },
+            required: ["overallSentiment", "sentimentScore", "trends"],
           },
-          required: ["overallSentiment", "sentimentScore", "trends"],
         },
-      },
-    });
+      });
 
-    const parsed = JSON.parse(response.text || "{}");
-    return {
-      overallSentiment: parsed.overallSentiment || "Neutral",
-      sentimentScore: typeof parsed.sentimentScore === "number" ? parsed.sentimentScore : 50,
-      trends: Array.isArray(parsed.trends) ? parsed.trends : [],
-      sources: [],
-    };
-  });
+      const parsed = JSON.parse(response.text || "{}");
+      return {
+        overallSentiment: parsed.overallSentiment || "Neutral",
+        sentimentScore: typeof parsed.sentimentScore === "number" ? parsed.sentimentScore : 50,
+        trends: Array.isArray(parsed.trends) ? parsed.trends : [],
+        sources: [],
+      };
+    });
+  } catch (error) {
+    console.warn("Falling back to local market trends data.", error);
+    return buildFallbackMarketAnalysis(userSkills);
+  }
 };
 
 export const evaluateCareer = async (resume: ResumeData, targetRole: string): Promise<CareerMatch> => {
